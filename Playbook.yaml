@@ -1,0 +1,106 @@
+- name:  App Java with Maven - Ubuntu Linux
+  hosts: servers
+  become: yes
+  remote_user: user
+  gather_facts: no
+  
+
+  vars:
+    maven_major_version: 3
+    maven_version: 3.8.6
+    java_version: 2:1.11-72build2
+    
+
+  tasks:
+    - name: Install Default Java JRE/JDK
+      apt:
+        pkg:
+        - default-jre={{ java_version  }}
+        - default-jdk={{ java_version }}
+        update_cache: yes
+
+    - name: Create Maven Directory
+      file:
+        path: /usr/local/apache-maven
+        state: directory
+        mode: '0775'
+        recurse: yes
+        owner: root
+        group: root
+
+    - name: Download and Unarchive Maven
+      unarchive:
+        src: https://dlcdn.apache.org/maven/maven-{{ maven_major_version }}/{{ maven_version }}/binaries/apache-maven-{{ maven_version }}-bin.tar.gz
+        dest: /usr/local/apache-maven
+        remote_src: yes
+
+    - name: Config /root/.bashrc
+      blockinfile:
+        create: yes
+        path: /root/.bashrc
+        block: |
+          export M2_HOME=/usr/local/apache-maven/apache-maven-{{ maven_version }}
+          export M2=$M2_HOME/bin
+          export MAVEN_OPTS="-Xms256m -Xmx512m"
+          export PATH=$M2:$PATH
+
+    - name: Create Directory for Project
+      file:
+        path: /HelloWorldMaven
+        state: directory
+        mode: '0775'
+        recurse: yes
+        owner: root
+        group: root
+
+    - name: Clone App Repository
+      git:
+        repo: https://github.com/acmano7/java-hello-world.git
+        dest: /HelloWorldMaven
+        update: yes
+        force: yes
+
+    - name: Create Java App
+      shell: . ~/.bashrc && mvn install -f /HelloWorldMaven/pom.xml
+      register: result
+
+    - name: Create Group for javaapp user
+      group:
+        name: javaapp
+        state: present
+        gid: 9999
+
+    - name: Create User to run App
+      user:
+        name: javaapp
+        shell: /bin/false
+        comment: User - Java App 
+        uid: 9999
+        group: 9999
+        system: yes
+
+    - name: Create Systemd Service for App
+      blockinfile:
+        create: yes
+        path: /etc/systemd/system/java-hello-world.service
+        block: |
+          [Unit]
+          Description=Java App
+
+          [Service]
+          User=javaapp
+          Group=javaapp
+          ExecStart=/bin/bash -c "while true; do java -cp /HelloWorldMaven/target/jb-hello-world-maven-0.2.0.jar hello.HelloWorld > /tmp/java_app.txt && sleep 2; done"
+          ExecStop=kill $MAINPID
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload Daemon, Start, Enable App Service
+      systemd:
+        name: java-hello-world.service
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
+
